@@ -219,3 +219,6 @@ __marimo__/
 
 .conda
 *.whl
+node_modules/
+data/
+docs/
