@@ -71,4 +71,4 @@ async def stream_data(hours: float) -> None:
     print("Streaming is finished...")
 
 if __name__ == "__main__":
-    asyncio.run(stream_data(hours=5 / 60))
+    asyncio.run(stream_data(hours=2.0))
