@@ -18,7 +18,6 @@ async def stream_data(hours: float) -> None:
         while time.time() < end_time:
             try:
                 async with websockets.connect(URL, ping_interval=None) as ws:
-                    # 使用符合 API 規範的訂閱格式
                     sub_payload = {
                         "event": "subscribe",
                         "arg": [
@@ -71,4 +70,4 @@ async def stream_data(hours: float) -> None:
     print("Streaming is finished...")
 
 if __name__ == "__main__":
-    asyncio.run(stream_data(hours=2.0))
+    asyncio.run(stream_data(hours=48.0))
