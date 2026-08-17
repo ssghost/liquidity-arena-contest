@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 from interface.logger import ReasoningLogger
-from risk.manager import RiskManager
+from strategy.manager import RiskManager
 
 
 class StrategyAdapter:
