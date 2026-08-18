@@ -8,7 +8,7 @@ from strategy.adapter import StrategyAdapter
 from interface.logger import ReasoningLogger
 
 
-def run_tests():
+def run_tests() -> None:
     print("\n1. Testing RiskManager...")
     rm = RiskManager(initial_balance=10000.0, max_leverage=2.0, nav_drawdown_limit=0.80)
     assert rm.calculate_nav() == 1.0, "Initial NAV must be 1.0."
@@ -41,27 +41,49 @@ def run_tests():
     temp_data_file = "logs/mock_market_data.jsonl"
     os.makedirs(os.path.dirname(temp_data_file), exist_ok=True)
 
-    with open(temp_data_file, "w", encoding="utf-8") as f:
-        for p in [60000.0, 60100.0, 60200.0, 60150.0, 60300.0]:
-            event = {
+    try:
+        with open(temp_data_file, "w", encoding="utf-8") as f:
+            f.write(json.dumps({
                 "symbol": "BINANCE_PERP_BTC_USDT",
-                "data": {
-                    "bids": [[p - 5.0, 4.0], [p - 10.0, 2.0]],
-                    "asks": [[p + 5.0, 1.0], [p + 10.0, 1.0]],
-                },
-            }
-            f.write(json.dumps(event) + "\n")
+                "data": {"bids": [[60000.0, 5.0], [59990.0, 3.0]], "asks": [[60010.0, 1.0], [60020.0, 1.0]]}
+            }) + "\n")
+            f.write(json.dumps({
+                "symbol": "BINANCE_PERP_BTC_USDT",
+                "data": {"bids": [[60100.0, 1.0], [60090.0, 1.0]], "asks": [[60110.0, 6.0], [60120.0, 4.0]]}
+            }) + "\n")
+            f.write(json.dumps({
+                "symbol": "BINANCE_PERP_BTC_USDT",
+                "data": {"bids": [[60050.0, 5.0], [60040.0, 2.0]], "asks": [[60060.0, 1.0], [60070.0, 1.0]]}
+            }) + "\n")
 
-    backtester = Backtester(data_path=temp_data_file, initial_balance=10000.0)
-    results = backtester.run()
+        backtester = Backtester(
+            data_path=temp_data_file,
+            initial_balance=10000.0,
+            fee_rate=0.0005,
+            slippage_bps=0.5,
+        )
+        results = backtester.run()
 
-    assert "final_nav" in results, "Backtest results missing final_nav."
-    assert "sharpe_ratio" in results, "Backtest results missing sharpe_ratio."
-    assert results["total_trades"] > 0, "Backtest should execute simulated trades."
-    print(f"Backtest execution passed. Metrics: {results}")
+        required_fields = [
+            "initial_balance",
+            "final_nav",
+            "total_return_pct",
+            "max_drawdown_pct",
+            "sharpe_ratio",
+            "total_orders",
+            "closed_trades",
+            "win_rate_pct",
+            "profit_factor",
+            "total_fees_paid",
+        ]
+        for field in required_fields:
+            assert field in results, f"Backtest results missing field: {field}"
 
-    if os.path.exists(temp_data_file):
-        os.remove(temp_data_file)
+        assert results["total_orders"] > 0, "Backtest should execute simulated orders."
+        print(f"Backtest execution passed. Metrics: {results}")
+    finally:
+        if os.path.exists(temp_data_file):
+            os.remove(temp_data_file)
 
 if __name__ == "__main__":
     run_tests()

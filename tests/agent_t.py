@@ -4,7 +4,7 @@ from agent.engine import DualTrackTradingEngine
 from agent.executor import OrderExecutor
 
 
-async def run_async_tests():
+async def run_async_tests() -> None:
     print("\n1. Testing OrderExecutor (Mock Mode)...")
     executor = OrderExecutor(mock_mode=True)
     order_res = await executor.place_order(
@@ -44,8 +44,5 @@ async def run_async_tests():
     assert len(engine.executor.active_orders) > 0, "Fast path should trigger an order on strong imbalance."
     print("Fast path snapshot ingestion and decision routing passed.")
 
-def main():
-    asyncio.run(run_async_tests())
-
 if __name__ == "__main__":
-    main()
+    asyncio.run(run_async_tests())

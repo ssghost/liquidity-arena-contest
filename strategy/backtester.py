@@ -15,6 +15,8 @@ class Backtester:
         obi_threshold: float = 0.25,
         order_size: float = 0.01,
         log_file: str = "logs/backtest_reasoning.jsonl",
+        fee_rate: float = 0.0005,
+        slippage_bps: float = 0.5,
     ):
         self.data_path = data_path
         self.initial_balance = initial_balance
@@ -33,6 +35,9 @@ class Backtester:
 
         self.nav_history: List[float] = [1.0]
         self.trade_history: List[Dict[str, Any]] = []
+        self.fee_rate = fee_rate
+        self.slippage_bps = slippage_bps
+        self.closed_trades: List[Dict[str, Any]] = []
 
     def run(self) -> Dict[str, Any]:
         if not os.path.exists(self.data_path):
@@ -75,27 +80,57 @@ class Backtester:
 
     def _execute_simulated_order(self, symbol: str, action: str, price: float, quantity: float) -> None:
         side_multiplier = 1.0 if action == "BUY_OPEN" else -1.0
+        slippage_factor = (1.0 + self.slippage_bps * 0.0001) if action == "BUY_OPEN" else (1.0 - self.slippage_bps * 0.0001)
+        exec_price = price * slippage_factor
+        fee = exec_price * quantity * self.fee_rate
+
+        realized_pnl = 0.0
+
         if symbol not in self.risk_manager.positions:
             self.risk_manager.positions[symbol] = {
                 "quantity": side_multiplier * quantity,
-                "entry_price": price,
-                "current_price": price,
+                "entry_price": exec_price,
+                "current_price": exec_price,
             }
         else:
             pos = self.risk_manager.positions[symbol]
-            new_qty = pos["quantity"] + side_multiplier * quantity
+            current_qty = pos["quantity"]
+
+            if (current_qty > 0 and side_multiplier < 0) or (current_qty < 0 and side_multiplier > 0):
+                closed_qty = min(abs(current_qty), quantity)
+                if current_qty > 0:  
+                    realized_pnl = (exec_price - pos["entry_price"]) * closed_qty - fee
+                else:  
+                    realized_pnl = (pos["entry_price"] - exec_price) * closed_qty - fee
+
+                self.closed_trades.append({
+                    "symbol": symbol,
+                    "closed_qty": closed_qty,
+                    "entry_price": pos["entry_price"],
+                    "exit_price": exec_price,
+                    "pnl": realized_pnl,
+                    "fee": fee,
+                })
+
+            new_qty = current_qty + side_multiplier * quantity
             if new_qty != 0:
-                pos["entry_price"] = (
-                    pos["quantity"] * pos["entry_price"] + (side_multiplier * quantity) * price
-                ) / new_qty
+                if (current_qty >= 0 and side_multiplier > 0) or (current_qty <= 0 and side_multiplier < 0):
+                    pos["entry_price"] = (
+                        abs(current_qty) * pos["entry_price"] + quantity * exec_price
+                    ) / abs(new_qty)
+            else:
+                pos["entry_price"] = 0.0
+
             pos["quantity"] = new_qty
-            pos["current_price"] = price
+            pos["current_price"] = exec_price
 
         self.trade_history.append({
             "symbol": symbol,
             "action": action,
-            "price": price,
+            "price": exec_price,
             "quantity": quantity,
+            "fee": fee,
+            "realized_pnl": realized_pnl,
         })
 
     def calculate_metrics(self) -> Dict[str, Any]:
@@ -128,11 +163,26 @@ class Backtester:
         else:
             sharpe_ratio = 0.0
 
+        pnls = [t["pnl"] for t in self.closed_trades]
+        winning_trades = [p for p in pnls if p > 0]
+        losing_trades = [p for p in pnls if p < 0]
+
+        total_closed = len(pnls)
+        win_rate_pct = (len(winning_trades) / total_closed * 100.0) if total_closed > 0 else 0.0
+        total_gain = sum(winning_trades)
+        total_loss = abs(sum(losing_trades))
+        profit_factor = (total_gain / total_loss) if total_loss > 0 else (999.0 if total_gain > 0 else 0.0)
+        total_fees = sum(t.get("fee", 0.0) for t in self.trade_history)
+
         return {
             "initial_balance": self.initial_balance,
             "final_nav": round(final_nav, 4),
             "total_return_pct": round(total_return, 2),
             "max_drawdown_pct": round(max_drawdown * 100.0, 2),
             "sharpe_ratio": round(sharpe_ratio, 2),
-            "total_trades": len(self.trade_history),
+            "total_orders": len(self.trade_history),
+            "closed_trades": total_closed,
+            "win_rate_pct": round(win_rate_pct, 2),
+            "profit_factor": round(profit_factor, 2),
+            "total_fees_paid": round(total_fees, 4),
         }
