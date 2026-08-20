@@ -1,6 +1,5 @@
 from typing import Any, Dict, Tuple
 
-
 class RiskManager:
     def __init__(
         self,

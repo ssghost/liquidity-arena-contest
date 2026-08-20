@@ -1,12 +1,10 @@
 import json
 import os
-from pathlib import Path
 
 from strategy.backtester import Backtester
 from strategy.manager import RiskManager
 from strategy.adapter import StrategyAdapter
 from interface.logger import ReasoningLogger
-
 
 def run_tests() -> None:
     print("\n1. Testing RiskManager...")
@@ -44,16 +42,34 @@ def run_tests() -> None:
     try:
         with open(temp_data_file, "w", encoding="utf-8") as f:
             f.write(json.dumps({
-                "symbol": "BINANCE_PERP_BTC_USDT",
-                "data": {"bids": [[60000.0, 5.0], [59990.0, 3.0]], "asks": [[60010.0, 1.0], [60020.0, 1.0]]}
+                "event": "subscribe",
+                "arg": [{"channel": "ORDER_BOOK", "sym": "BINANCE_PERP_BTC_USDT"}],
+                "code": 0,
+                "message": "Success"
             }) + "\n")
             f.write(json.dumps({
-                "symbol": "BINANCE_PERP_BTC_USDT",
-                "data": {"bids": [[60100.0, 1.0], [60090.0, 1.0]], "asks": [[60110.0, 6.0], [60120.0, 4.0]]}
+                "arg": {"channel": "ORDER_BOOK", "sym": "BINANCE_PERP_BTC_USDT"},
+                "data": {
+                    "ts": "1787033025162",
+                    "Bids": [["60000.0", "5.0"], ["59990.0", "3.0"]],
+                    "Asks": [["60010.0", "1.0"], ["60020.0", "1.0"]]
+                }
             }) + "\n")
             f.write(json.dumps({
-                "symbol": "BINANCE_PERP_BTC_USDT",
-                "data": {"bids": [[60050.0, 5.0], [60040.0, 2.0]], "asks": [[60060.0, 1.0], [60070.0, 1.0]]}
+                "arg": {"channel": "ORDER_BOOK", "sym": "BINANCE_PERP_BTC_USDT"},
+                "data": {
+                    "ts": "1787033026162",
+                    "Bids": [["60100.0", "1.0"], ["60090.0", "1.0"]],
+                    "Asks": [["60110.0", "6.0"], ["60120.0", "4.0"]]
+                }
+            }) + "\n")
+            f.write(json.dumps({
+                "arg": {"channel": "ORDER_BOOK", "sym": "BINANCE_PERP_BTC_USDT"},
+                "data": {
+                    "ts": "1787033027162",
+                    "Bids": [["60050.0", "5.0"], ["60040.0", "2.0"]],
+                    "Asks": [["60060.0", "1.0"], ["60070.0", "1.0"]]
+                }
             }) + "\n")
 
         backtester = Backtester(
@@ -80,10 +96,12 @@ def run_tests() -> None:
             assert field in results, f"Backtest results missing field: {field}"
 
         assert results["total_orders"] > 0, "Backtest should execute simulated orders."
-        print(f"Backtest execution passed. Metrics: {results}")
+        print(f"Backtest passed. Metrics: {results}")
+
     finally:
         if os.path.exists(temp_data_file):
             os.remove(temp_data_file)
+
 
 if __name__ == "__main__":
     run_tests()

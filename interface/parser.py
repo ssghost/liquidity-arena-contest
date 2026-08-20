@@ -2,7 +2,6 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
-
 class NLPParser:
     """Unstructured market intelligence parser for event classification,
 

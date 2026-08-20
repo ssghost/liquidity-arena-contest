@@ -4,7 +4,6 @@ from interface.parser import NLPParser
 from interface.logger import ReasoningLogger
 from interface.limiter import TokenLimiter
 
-
 def run_tests() -> None:
     print("\n1. Testing TokenLimiter...")
     limiter = TokenLimiter(daily_budget_usd=10.0)

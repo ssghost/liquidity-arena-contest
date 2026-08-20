@@ -6,7 +6,6 @@ from interface.logger import ReasoningLogger
 from strategy.manager import RiskManager
 from strategy.adapter import StrategyAdapter
 
-
 class Backtester:
     def __init__(
         self,
@@ -20,6 +19,7 @@ class Backtester:
     ):
         self.data_path = data_path
         self.initial_balance = initial_balance
+        self.balance = initial_balance
         self.risk_manager = RiskManager(
             initial_balance=initial_balance,
             max_leverage=2.0,
@@ -53,13 +53,28 @@ class Backtester:
                 except Exception:
                     continue
 
-                data = event.get("data", {})
-                bids = data.get("bids", [])
-                asks = data.get("asks", [])
-                symbol = event.get("symbol", "BINANCE_PERP_BTC_USDT")
-
-                if not bids or not asks:
+                if event.get("event") == "subscribe":
                     continue
+
+                arg = event.get("arg", {})
+                data = event.get("data", {})
+
+                raw_bids = data.get("Bids") or data.get("bids", [])
+                raw_asks = data.get("Asks") or data.get("asks", [])
+                symbol = arg.get("sym") or event.get("symbol", "BINANCE_PERP_BTC_USDT")
+
+                if not raw_bids or not raw_asks:
+                    continue
+
+                try:
+                    bids = [[float(b[0]), float(b[1])] for b in raw_bids]
+                    asks = [[float(a[0]), float(a[1])] for a in raw_asks]
+                except (ValueError, IndexError):
+                    continue
+
+                mid_price = (bids[0][0] + asks[0][0]) / 2.0
+                if symbol in self.risk_manager.positions:
+                    self.risk_manager.positions[symbol]["current_price"] = mid_price
 
                 decision_record = self.strategy.generate_decision(
                     symbol=symbol,
@@ -70,17 +85,26 @@ class Backtester:
 
                 action = decision_record["decision"]["action"]
                 params = decision_record["decision"]["order_params"]
+
                 if action in ["BUY_OPEN", "SELL_OPEN"] and params:
                     self._execute_simulated_order(symbol, action, params["price"], params["quantity"])
+                elif action == "CLOSE_POSITION" and params:
+                    close_action = "SELL_CLOSE" if params.get("side") == "SELL" else "BUY_CLOSE"
+                    self._execute_simulated_order(symbol, close_action, params["price"], params["quantity"])
 
-                current_nav = self.risk_manager.calculate_nav()
+                unrealized_pnl = sum(
+                    (pos["current_price"] - pos["entry_price"]) * pos["quantity"]
+                    for pos in self.risk_manager.positions.values()
+                )
+                current_nav = (self.balance + unrealized_pnl) / self.initial_balance
                 self.nav_history.append(current_nav)
 
         return self.calculate_metrics()
 
     def _execute_simulated_order(self, symbol: str, action: str, price: float, quantity: float) -> None:
-        side_multiplier = 1.0 if action == "BUY_OPEN" else -1.0
-        slippage_factor = (1.0 + self.slippage_bps * 0.0001) if action == "BUY_OPEN" else (1.0 - self.slippage_bps * 0.0001)
+        is_buy = action in ["BUY_OPEN", "BUY_CLOSE"]
+        side_multiplier = 1.0 if is_buy else -1.0
+        slippage_factor = (1.0 + self.slippage_bps * 0.0001) if is_buy else (1.0 - self.slippage_bps * 0.0001)
         exec_price = price * slippage_factor
         fee = exec_price * quantity * self.fee_rate
 
@@ -92,6 +116,7 @@ class Backtester:
                 "entry_price": exec_price,
                 "current_price": exec_price,
             }
+            self.balance -= fee
         else:
             pos = self.risk_manager.positions[symbol]
             current_qty = pos["quantity"]
@@ -103,6 +128,7 @@ class Backtester:
                 else:  
                     realized_pnl = (pos["entry_price"] - exec_price) * closed_qty - fee
 
+                self.balance += realized_pnl
                 self.closed_trades.append({
                     "symbol": symbol,
                     "closed_qty": closed_qty,
@@ -111,6 +137,8 @@ class Backtester:
                     "pnl": realized_pnl,
                     "fee": fee,
                 })
+            else:
+                self.balance -= fee
 
             new_qty = current_qty + side_multiplier * quantity
             if new_qty != 0:
@@ -149,17 +177,22 @@ class Backtester:
             if drawdown > max_drawdown:
                 max_drawdown = drawdown
 
+        sample_step = 200
+        sampled_nav = self.nav_history[::sample_step]
+        if len(sampled_nav) < 2:
+            sampled_nav = self.nav_history
+
         periodic_returns = [
-            (self.nav_history[i] - self.nav_history[i - 1]) / self.nav_history[i - 1]
-            for i in range(1, len(self.nav_history))
-            if self.nav_history[i - 1] > 0
+            (sampled_nav[i] - sampled_nav[i - 1]) / sampled_nav[i - 1]
+            for i in range(1, len(sampled_nav))
+            if sampled_nav[i - 1] > 0
         ]
 
         if len(periodic_returns) > 1:
             mean_ret = sum(periodic_returns) / len(periodic_returns)
             variance = sum((r - mean_ret) ** 2 for r in periodic_returns) / (len(periodic_returns) - 1)
             std_dev = math.sqrt(variance)
-            sharpe_ratio = (mean_ret / std_dev) * math.sqrt(365 * 24 * 60) if std_dev > 0 else 0.0
+            sharpe_ratio = (mean_ret / std_dev) * math.sqrt(365 * 24 * 60) if std_dev > 1e-9 else 0.0
         else:
             sharpe_ratio = 0.0
 

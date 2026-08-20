@@ -3,7 +3,6 @@ import os
 import time
 from typing import Any, Dict, Optional
 
-
 class ReasoningLogger:
     def __init__(self, log_file: str = "logs/reasoning_log.jsonl"):
         self.log_file = log_file

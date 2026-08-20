@@ -6,7 +6,6 @@ import aiohttp
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("OrderExecutor")
 
-
 class OrderExecutor:
     def __init__(
         self,
