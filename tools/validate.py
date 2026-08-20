@@ -1,7 +1,6 @@
 import json
 import os
-import sys
-from pathlib import Path
+
 
 def validate_dataset(file_path: str, dataset_type: str = "orderbook") -> None:
     if not os.path.exists(file_path):
@@ -26,22 +25,26 @@ def validate_dataset(file_path: str, dataset_type: str = "orderbook") -> None:
                 continue
             try:
                 record = json.loads(line)
+                if "event" in record and record.get("event") == "subscribe":
+                    continue
+
+                arg = record.get("arg", {})
+                data = record.get("data", {})
+                sym = arg.get("sym") or record.get("symbol") or record.get("sym")
+                ts = data.get("ts") or record.get("ts")
+
                 if dataset_type == "orderbook":
-                    data = record.get("data", {})
-                    bids = data.get("bids", [])
-                    asks = data.get("asks", [])
-                    sym = record.get("symbol") or record.get("sym") or data.get("symbol")
-                    ts = record.get("timestamp") or record.get("time") or record.get("ts")
+                    bids = data.get("Bids") or data.get("bids", [])
+                    asks = data.get("Asks") or data.get("asks", [])
 
                     if bids and asks:
                         valid_records += 1
                     else:
                         corrupted_lines += 1
-                else:  
-                    trades = record.get("data", [])
-                    sym = record.get("symbol") or record.get("sym")
-                    ts = record.get("timestamp") or record.get("time") or record.get("ts")
-                    if trades:
+                else:
+                    if isinstance(data, dict) and "price" in data and "qty" in data:
+                        valid_records += 1
+                    elif isinstance(data, list) and len(data) > 0:
                         valid_records += 1
                     else:
                         corrupted_lines += 1
@@ -66,6 +69,7 @@ def validate_dataset(file_path: str, dataset_type: str = "orderbook") -> None:
     print(f"Detected Symbols:  {list(symbols)}")
     print(f"Start Timestamp:   {first_timestamp}")
     print(f"End Timestamp:     {last_timestamp}")
+
 
 if __name__ == "__main__":
     validate_dataset("data/orderbook.jsonl", dataset_type="orderbook")
