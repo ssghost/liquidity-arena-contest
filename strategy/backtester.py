@@ -1,7 +1,7 @@
 import json
 import math
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from interface.logger import ReasoningLogger
 from strategy.manager import RiskManager
 from strategy.adapter import StrategyAdapter
@@ -9,9 +9,9 @@ from strategy.adapter import StrategyAdapter
 class Backtester:
     def __init__(
         self,
-        data_path: str,
+        data_path: str = "data/orderbook.jsonl",
         initial_balance: float = 10000.0,
-        obi_threshold: float = 0.25,
+        obi_threshold: float = 0.30,
         order_size: float = 0.01,
         log_file: str = "logs/backtest_reasoning.jsonl",
         fee_rate: float = 0.0005,
@@ -20,6 +20,7 @@ class Backtester:
         self.data_path = data_path
         self.initial_balance = initial_balance
         self.balance = initial_balance
+        self.log_file = log_file
         self.risk_manager = RiskManager(
             initial_balance=initial_balance,
             max_leverage=2.0,
@@ -39,9 +40,17 @@ class Backtester:
         self.slippage_bps = slippage_bps
         self.closed_trades: List[Dict[str, Any]] = []
 
-    def run(self) -> Dict[str, Any]:
+    def run(
+        self,
+        verbose: bool = True,
+        save_summary: bool = True,
+        summary_path: str = "logs/backtest_summary.json",
+    ) -> Dict[str, Any]:
         if not os.path.exists(self.data_path):
             raise FileNotFoundError(f"Market data file not found: {self.data_path}")
+
+        if verbose:
+            print("Starting Full-Fidelity Event-Driven Backtest")
 
         with open(self.data_path, "r", encoding="utf-8") as f:
             for line in f:
@@ -80,7 +89,7 @@ class Backtester:
                     symbol=symbol,
                     bids=bids,
                     asks=asks,
-                    nlp_intel=None,  
+                    nlp_intel=None,
                 )
 
                 action = decision_record["decision"]["action"]
@@ -99,7 +108,28 @@ class Backtester:
                 current_nav = (self.balance + unrealized_pnl) / self.initial_balance
                 self.nav_history.append(current_nav)
 
-        return self.calculate_metrics()
+        metrics = self.calculate_metrics()
+
+        if verbose:
+            print("BACKTEST PERFORMANCE SUMMARY")
+            print(f"Final NAV         : {metrics['final_nav']:.4f}")
+            print(f"Total Return      : {metrics['total_return_pct']:+.2f}%")
+            print(f"Max Drawdown      : {metrics['max_drawdown_pct']:.2f}%")
+            print(f"Sharpe Ratio      : {metrics['sharpe_ratio']:.2f}")
+            print(f"Win Rate          : {metrics['win_rate_pct']:.2f}% ({metrics['closed_trades']} closed trades)")
+            print(f"Profit Factor     : {metrics['profit_factor']:.2f}")
+            print(f"Total Orders Exec : {metrics['total_orders']}")
+            print(f"Total Fees Paid   : ${metrics['total_fees_paid']:.4f}")
+            print(f"Reasoning Log     : {self.log_file}")
+
+        if save_summary:
+            os.makedirs(os.path.dirname(summary_path), exist_ok=True)
+            with open(summary_path, "w", encoding="utf-8") as f:
+                json.dump(metrics, f, indent=2)
+            if verbose:
+                print(f"Summary metrics saved to: {summary_path}")
+
+        return metrics
 
     def _execute_simulated_order(self, symbol: str, action: str, price: float, quantity: float) -> None:
         is_buy = action in ["BUY_OPEN", "BUY_CLOSE"]
@@ -123,9 +153,9 @@ class Backtester:
 
             if (current_qty > 0 and side_multiplier < 0) or (current_qty < 0 and side_multiplier > 0):
                 closed_qty = min(abs(current_qty), quantity)
-                if current_qty > 0:  
+                if current_qty > 0:
                     realized_pnl = (exec_price - pos["entry_price"]) * closed_qty - fee
-                else:  
+                else:
                     realized_pnl = (pos["entry_price"] - exec_price) * closed_qty - fee
 
                 self.balance += realized_pnl
@@ -219,3 +249,6 @@ class Backtester:
             "profit_factor": round(profit_factor, 2),
             "total_fees_paid": round(total_fees, 4),
         }
+
+if __name__ == "__main__":
+    Backtester().run()
