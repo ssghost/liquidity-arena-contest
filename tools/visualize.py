@@ -3,7 +3,6 @@ import os
 from typing import Any, Dict, List
 import matplotlib.pyplot as plt
 
-
 def load_backtest_data(
     log_file: str = "logs/backtest_reasoning.jsonl",
     summary_file: str = "logs/backtest_summary.json",
@@ -24,13 +23,23 @@ def load_backtest_data(
             except Exception:
                 continue
 
-            nav = record.get("decision", {}).get("risk_verification", {}).get("current_nav", 1.0)
+            risk_info = (
+                record.get("risk_evaluation")
+                or record.get("decision", {}).get("risk_verification")
+                or record.get("decision", {}).get("risk_evaluation")
+                or {}
+            )
+            nav = risk_info.get("nav") or risk_info.get("current_nav") or 1.0
+
             nav_series.append(nav)
             timestamps.append(record.get("timestamp", ""))
 
-            action = record.get("decision", {}).get("action")
+            decision_obj = record.get("decision", {})
+            action = record.get("action") or decision_obj.get("action")
+            
             if action in ["BUY_OPEN", "SELL_OPEN", "CLOSE_POSITION"]:
-                price = record.get("decision", {}).get("order_params", {}).get("price")
+                order_params = record.get("action_params") or decision_obj.get("order_params") or {}
+                price = order_params.get("price")
                 trades.append({
                     "index": len(nav_series) - 1,
                     "action": action,
@@ -107,11 +116,20 @@ def plot_performance(
             zorder=5,
         )
 
+    net_pnl = summary.get("net_pnl_usd", 0.0)
+    ret_pct = summary.get("total_return_pct", 0.0)
+    sharpe = summary.get("sharpe_ratio", 0.0)
+    max_dd = summary.get("max_drawdown_pct", 0.0)
+    win_rate = summary.get("win_rate_pct", 0.0)
+    closed_trades_count = summary.get("closed_trades", len(close_trades))
+
     title_text = (
-        f"Track A Backtest Performance | Return: {summary.get('total_return_pct', 0.0):+.2f}% | "
-        f"Sharpe: {summary.get('sharpe_ratio', 0.0):.2f} | MaxDD: {summary.get('max_drawdown_pct', 0.0):.2f}%"
+        f"Strategy Performance | Net PnL: {net_pnl:+.2f} USD ({ret_pct:+.2f}%) | "
+        f"Sharpe: {sharpe:.2f} | MaxDD: {max_dd:.2f}%\n"
+        f"Win Rate: {win_rate:.2f}% | Closed Trades: {closed_trades_count} | Profit Factor: {summary.get('profit_factor', 0.0):.2f}"
     )
-    ax1.set_title(title_text, fontsize=12, fontweight="bold")
+    ax1.set_title(title_text, fontsize=11, fontweight="bold")
+
     ax1.set_ylabel("Net Asset Value (NAV)")
     ax1.legend(loc="upper left")
     ax1.grid(True, linestyle="--", alpha=0.5)
@@ -130,10 +148,6 @@ def plot_performance(
 
     print(f"Performance chart generated: {output_chart}")
 
-def main() -> None:
+if __name__ == "__main__":
     data = load_backtest_data()
     plot_performance(data)
-
-
-if __name__ == "__main__":
-    main()

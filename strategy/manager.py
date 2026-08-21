@@ -3,17 +3,16 @@ from typing import Any, Dict, Tuple
 class RiskManager:
     def __init__(
         self,
-        initial_balance: float = 10000.0,
+        initial_balance: float = 1000.0,
         max_leverage: float = 2.0,
         nav_drawdown_limit: float = 0.80,
-        max_single_order_ratio: float = 0.30,
+        max_single_order_ratio: float = 2.0,
     ):
         self.initial_balance = initial_balance
         self.current_cash = initial_balance
         self.max_leverage = max_leverage
         self.nav_drawdown_limit = nav_drawdown_limit
         self.max_single_order_ratio = max_single_order_ratio
-
         self.positions: Dict[str, Dict[str, float]] = {}
 
     def update_market_price(self, symbol: str, current_price: float) -> None:

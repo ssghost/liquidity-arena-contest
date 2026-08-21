@@ -3,22 +3,21 @@ from typing import Any, Dict, List, Optional
 from interface.logger import ReasoningLogger
 from strategy.manager import RiskManager
 
-
 class StrategyAdapter:
     def __init__(
         self,
         risk_manager: RiskManager,
         reasoning_logger: Optional[ReasoningLogger] = None,
-        obi_threshold: float = 0.30,
-        default_order_size: float = 0.01,
-        tp_bps: float = 110.0,             
-        sl_bps: float = 35.0,              
-        max_holding_ticks: int = 6000,     
-        max_inventory_qty: float = 0.01,   
-        cooldown_ticks: int = 300,         
-        ema_alpha: float = 0.08,          
-        trend_alpha: float = 0.00033,     
-        max_spread_bps: float = 2.5,      
+        obi_threshold: float = 0.42,
+        default_order_size: float = 0.025,
+        tp_bps: float = 180.0,
+        sl_bps: float = 45.0,
+        max_holding_ticks: int = 8000,
+        max_inventory_qty: float = 0.030,
+        cooldown_ticks: int = 800,
+        ema_alpha: float = 0.08,
+        trend_alpha: float = 0.00033,
+        max_spread_bps: float = 2.5,
     ):
         self.risk_manager = risk_manager
         self.logger = reasoning_logger
@@ -136,11 +135,11 @@ class StrategyAdapter:
 
             if pnl_bps >= self.tp_bps:
                 action = "CLOSE_POSITION"
-                reason = f"Take-Profit triggered (+{pnl_bps:.2f} bps)."
+                reason = f"Take-Profit triggered (+{pnl_bps:.2f} bps >= {self.tp_bps:.1f} bps)."
                 order_params = {"price": features["best_bid"], "quantity": abs(current_qty), "side": "SELL"}
             elif pnl_bps <= -self.sl_bps:
                 action = "CLOSE_POSITION"
-                reason = f"Stop-Loss triggered ({pnl_bps:.2f} bps, SL threshold: -{self.sl_bps:.2f} bps)."
+                reason = f"Stop-Loss triggered ({pnl_bps:.2f} bps <= -{self.sl_bps:.2f} bps)."
                 order_params = {"price": features["best_bid"], "quantity": abs(current_qty), "side": "SELL"}
             elif current_age >= self.max_holding_ticks:
                 action = "CLOSE_POSITION"
@@ -149,29 +148,39 @@ class StrategyAdapter:
 
         if (
             action == "HOLD"
-            and abs(current_qty) < self.max_inventory_qty
+            and abs(current_qty) < 1e-5
             and self.cooldown_counter.get(symbol, 0) == 0
             and spread_bps <= self.max_spread_bps
         ):
             nlp_filter = nlp_intel.get("trade_action_filter", "ALLOW_ALL") if nlp_intel else "ALLOW_ALL"
             directional_bias = nlp_intel.get("directional_bias", 0.0) if nlp_intel else 0.0
+            impact_level = nlp_intel.get("impact_level", "LOW") if nlp_intel else "LOW"
+            confidence = (
+                nlp_intel.get("confidence") or nlp_intel.get("confidence_score") or 0.5
+                if nlp_intel else 0.5
+            )
 
             if (
                 mid_price > trend_price
                 and ema_obi > self.obi_threshold
                 and nlp_filter in ["ALLOW_ALL", "ALLOW_BUY_ONLY"]
+                and directional_bias >= -0.2
             ):
-                if directional_bias >= -0.2:
-                    passed, r_reason, _ = self.risk_manager.evaluate_order(
-                        symbol, "BUY_OPEN", features["best_bid"], self.default_order_size
+                target_size = self.default_order_size
+                if impact_level == "HIGH" and confidence >= 0.80:
+                    target_size = min(self.max_inventory_qty, self.default_order_size * 1.20)
+
+                passed, r_reason, _ = self.risk_manager.evaluate_order(
+                    symbol, "BUY_OPEN", features["best_bid"], target_size
+                )
+                if passed and target_size > 0:
+                    action = "BUY_OPEN"
+                    reason = (
+                        f"Trend 15m Bullish (Price > EMA) with high OBI conviction ({ema_obi:.2f}) & "
+                        f"NLP bias ({directional_bias:+.2f}). {r_reason}"
                     )
-                    if passed:
-                        action = "BUY_OPEN"
-                        reason = (
-                            f"Trend 15m Bullish (Price > EMA) with OBI support ({ema_obi:.2f}). "
-                            f"{r_reason}"
-                        )
-                        order_params = {"price": features["best_bid"], "quantity": self.default_order_size}
+                    order_params = {"price": features["best_bid"], "quantity": round(target_size, 4)}
+                    self.cooldown_counter[symbol] = self.cooldown_ticks
 
         if action == "CLOSE_POSITION":
             self.cooldown_counter[symbol] = self.cooldown_ticks
@@ -189,6 +198,8 @@ class StrategyAdapter:
         }
 
         if self.logger:
+            current_nav = self.risk_manager.calculate_nav()
+            est_leverage = (abs(current_qty) * mid_price) / max(1.0, self.risk_manager.initial_balance)
             self.logger.log_decision(
                 symbol=symbol,
                 market_data=features,
@@ -196,7 +207,7 @@ class StrategyAdapter:
                 logical_deduction=reason,
                 action=action,
                 action_params=order_params,
-                risk_evaluation={"nav": self.risk_manager.calculate_nav()},
+                risk_evaluation={"nav": current_nav, "leverage": est_leverage, "passed": True},
             )
 
         return decision_record

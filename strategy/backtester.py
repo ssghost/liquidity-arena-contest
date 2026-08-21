@@ -12,9 +12,9 @@ class Backtester:
         self,
         data_path: str = "data/orderbook.jsonl",
         news_path: str = "data/news_feed.jsonl",
-        initial_balance: float = 10000.0,
-        obi_threshold: float = 0.30,
-        order_size: float = 0.01,
+        initial_balance: float = 1000.0,
+        obi_threshold: float = 0.42,
+        order_size: float = 0.025,
         log_file: str = "logs/backtest_reasoning.jsonl",
         fee_rate: float = 0.0005,
         slippage_bps: float = 0.5,
@@ -28,6 +28,7 @@ class Backtester:
             initial_balance=initial_balance,
             max_leverage=2.0,
             nav_drawdown_limit=0.80,
+            max_single_order_ratio=2.0,
         )
         self.logger = ReasoningLogger(log_file=log_file)
         self.strategy = StrategyAdapter(
@@ -35,6 +36,11 @@ class Backtester:
             reasoning_logger=self.logger,
             obi_threshold=obi_threshold,
             default_order_size=order_size,
+            tp_bps=180.0,
+            sl_bps=45.0,
+            max_holding_ticks=8000,
+            max_inventory_qty=0.030,
+            cooldown_ticks=800,
         )
 
         self.nav_history: List[float] = [1.0]
@@ -62,16 +68,11 @@ class Backtester:
         if not raw_news_list:
             return []
 
-        raw_news_list.sort(key=lambda x: x.get("timestamp", 0))
-        min_news_ts = raw_news_list[0].get("timestamp", 0)
-        
         timeline: List[Dict[str, Any]] = []
+        total_news = len(raw_news_list)
         for idx, news in enumerate(raw_news_list):
             item = dict(news)
-            offset = (news.get("timestamp", 0) - min_news_ts)
-            if offset < 0 or offset > 172800:
-                offset = (idx / max(1, len(raw_news_list))) * 165600.0  
-            item["sim_timestamp"] = sim_start_time + offset
+            item["sim_timestamp"] = sim_start_time + (idx / max(1, total_news)) * 165600.0
             timeline.append(item)
 
         timeline.sort(key=lambda x: x["sim_timestamp"])
@@ -123,7 +124,7 @@ class Backtester:
                 except (ValueError, IndexError):
                     continue
 
-                current_time = event.get("timestamp") or event.get("time") or (line_no * 0.3)
+                current_time = line_no * 0.3
                 if sim_start_time is None:
                     sim_start_time = current_time
                     nlp_timeline = self._load_news_timeline(sim_start_time)
@@ -166,6 +167,7 @@ class Backtester:
         if verbose:
             print("BACKTEST PERFORMANCE SUMMARY")
             print(f"Final NAV         : {metrics['final_nav']:.4f}")
+            print(f"Net PnL (USD)     : {metrics['net_pnl_usd']:+.2f} USD")
             print(f"Total Return      : {metrics['total_return_pct']:+.2f}%")
             print(f"Max Drawdown      : {metrics['max_drawdown_pct']:.2f}%")
             print(f"Sharpe Ratio      : {metrics['sharpe_ratio']:.2f}")
@@ -235,6 +237,8 @@ class Backtester:
             pos["quantity"] = new_qty
             pos["current_price"] = exec_price
 
+        self.risk_manager.current_cash = self.balance
+
         self.trade_history.append({
             "symbol": symbol,
             "action": action,
@@ -246,10 +250,11 @@ class Backtester:
 
     def calculate_metrics(self) -> Dict[str, Any]:
         if not self.nav_history:
-            return {"total_return": 0.0, "max_drawdown": 0.0, "sharpe_ratio": 0.0}
+            return {"total_return_pct": 0.0, "max_drawdown_pct": 0.0, "sharpe_ratio": 0.0, "net_pnl_usd": 0.0}
 
         final_nav = self.nav_history[-1]
         total_return = (final_nav - 1.0) * 100.0
+        net_pnl_usd = (final_nav - 1.0) * self.initial_balance
 
         peak = self.nav_history[0]
         max_drawdown = 0.0
@@ -293,6 +298,7 @@ class Backtester:
         return {
             "initial_balance": self.initial_balance,
             "final_nav": round(final_nav, 4),
+            "net_pnl_usd": round(net_pnl_usd, 2),
             "total_return_pct": round(total_return, 2),
             "max_drawdown_pct": round(max_drawdown * 100.0, 2),
             "sharpe_ratio": round(sharpe_ratio, 2),
@@ -302,6 +308,7 @@ class Backtester:
             "profit_factor": round(profit_factor, 2),
             "total_fees_paid": round(total_fees, 4),
         }
+
 
 if __name__ == "__main__":
     Backtester().run()
