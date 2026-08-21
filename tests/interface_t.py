@@ -1,8 +1,8 @@
 import json
 import os
-from interface.parser import NLPParser
-from interface.logger import ReasoningLogger
 from interface.limiter import TokenLimiter
+from interface.logger import ReasoningLogger
+from interface.parser import NLPParser
 
 def run_tests() -> None:
     print("\n1. Testing TokenLimiter...")
@@ -29,7 +29,7 @@ def run_tests() -> None:
         "impact_level": "HIGH",
         "volatility_bias": "EXPANSION",
         "directional_bias": 0.85,
-        "trade_action_filter": "ALLOW_ALL",
+        "trade_action_filter": "ALLOW_BUY_ONLY",
         "event_summary": "Fed cuts rates, creating bullish liquidity expansion.",
         "confidence": 0.9,
     })
@@ -38,7 +38,18 @@ def run_tests() -> None:
     assert parsed_result is not None, "NLP parser returned None."
     assert parsed_result["target_asset"] == "BTC", "Target asset parsing mismatch."
     assert parsed_result["directional_bias"] == 0.85, "Directional bias parsing mismatch."
-    print("NLPParser schema parsing and validation passed.")
+    assert parsed_result["trade_action_filter"] == "ALLOW_BUY_ONLY", "Action filter parsing mismatch."
+
+    heuristic_input = {
+        "source": "CoinTelegraph",
+        "headline": "Institutional ETF inflows accelerate amid dovish Fed rate cut outlook.",
+        "content": "Bitcoin rallies past key resistance levels.",
+        "timestamp": 1723872000,
+    }
+    heuristic_res = NLPParser.heuristic_parse(heuristic_input)
+    assert heuristic_res["trade_action_filter"] == "ALLOW_BUY_ONLY", "Heuristic filter mismatch."
+    assert heuristic_res["directional_bias"] > 0.0, "Heuristic bias mismatch."
+    print("NLPParser schema parsing, heuristic rules, and validation passed.")
 
     print("\n3. Testing TokenLimiter cache mechanism...")
     limiter.store_cache(raw_news, parsed_result)
@@ -50,10 +61,13 @@ def run_tests() -> None:
     print("TokenLimiter caching operations passed.")
 
     print("\n4. Testing ReasoningLogger...")
-    logger = ReasoningLogger(log_file="logs/test_reasoning_log.jsonl")
+    test_log_file = "logs/test_reasoning_log.jsonl"
+    logger = ReasoningLogger(log_file=test_log_file)
     mock_market_data = {
         "mid_price": 60500.0,
         "obi": 0.35,
+        "spread_bps": 1.2,
+        "trend_momentum_bps": 4.5,
         "funding_rate": 0.0001,
         "volatility": 0.02,
         "signal_state": "BULLISH_MOMENTUM",
@@ -70,11 +84,22 @@ def run_tests() -> None:
         risk_evaluation=mock_risk,
     )
 
-    assert os.path.exists("logs/test_reasoning_log.jsonl"), "Reasoning log file was not created."
+    assert os.path.exists(test_log_file), "Reasoning log file was not created."
     assert (
         log_entry["decision"]["action"] == "BUY_OPEN"
     ), "Logged trade action mismatch."
-    print("ReasoningLogger entry generation passed.")
+
+    assert "inputs" in log_entry, "Layer 1 inputs missing."
+    assert "analysis" in log_entry, "Layer 2 analysis missing."
+    assert "reasoning" in log_entry, "Layer 3 reasoning missing."
+    assert "decision" in log_entry, "Layer 4 decision missing."
+    assert log_entry["decision"]["risk_verification"]["risk_check_passed"] is True, "Risk check verification failed."
+
+    if os.path.exists(test_log_file):
+        os.remove(test_log_file)
+
+    print("ReasoningLogger 4-layer audit entry generation passed.")
+
 
 if __name__ == "__main__":
     run_tests()

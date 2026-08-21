@@ -5,7 +5,7 @@ description = "Default template for PDM package"
 authors = [
     {name = "ssghost", email = "ssprof0@gmail.com"},
 ]
-dependencies = ["pandas>=2.3.3", "numpy>=2.2.6", "lightgbm>=4.6.0", "scikit-learn>=1.7.2", "jupyter>=1.1.1", "file:///${PROJECT_ROOT}/torch-2.2.2-cp310-none-macosx_10_9_x86_64.whl", "websockets>=16.1.1", "aiohttp>=3.14.3", "certifi>=2026.7.22", "dotenv>=0.9.9"]
+dependencies = ["pandas>=2.3.3", "numpy>=2.2.6", "lightgbm>=4.6.0", "scikit-learn>=1.7.2", "jupyter>=1.1.1", "file:///${PROJECT_ROOT}/torch-2.2.2-cp310-none-macosx_10_9_x86_64.whl", "websockets>=16.1.1", "aiohttp>=3.14.3", "certifi>=2026.7.22", "dotenv>=0.9.9", "matplotlib>=3.10.9"]
 requires-python = "==3.10.*"
 readme = "README.md"
 license = {text = "MIT"}

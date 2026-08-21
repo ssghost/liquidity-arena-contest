@@ -3,13 +3,15 @@ import math
 import os
 from typing import Any, Dict, List, Optional
 from interface.logger import ReasoningLogger
-from strategy.manager import RiskManager
+from interface.parser import NLPParser
 from strategy.adapter import StrategyAdapter
+from strategy.manager import RiskManager
 
 class Backtester:
     def __init__(
         self,
         data_path: str = "data/orderbook.jsonl",
+        news_path: str = "data/news_feed.jsonl",
         initial_balance: float = 10000.0,
         obi_threshold: float = 0.30,
         order_size: float = 0.01,
@@ -18,6 +20,7 @@ class Backtester:
         slippage_bps: float = 0.5,
     ):
         self.data_path = data_path
+        self.news_path = news_path
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.log_file = log_file
@@ -40,6 +43,40 @@ class Backtester:
         self.slippage_bps = slippage_bps
         self.closed_trades: List[Dict[str, Any]] = []
 
+    def _load_news_timeline(self, sim_start_time: float) -> List[Dict[str, Any]]:
+        if not os.path.exists(self.news_path):
+            return []
+
+        raw_news_list: List[Dict[str, Any]] = []
+        with open(self.news_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    item = json.loads(line)
+                    parsed_intel = NLPParser.heuristic_parse(item)
+                    raw_news_list.append(parsed_intel)
+                except Exception:
+                    continue
+
+        if not raw_news_list:
+            return []
+
+        raw_news_list.sort(key=lambda x: x.get("timestamp", 0))
+        min_news_ts = raw_news_list[0].get("timestamp", 0)
+        
+        timeline: List[Dict[str, Any]] = []
+        for idx, news in enumerate(raw_news_list):
+            item = dict(news)
+            offset = (news.get("timestamp", 0) - min_news_ts)
+            if offset < 0 or offset > 172800:
+                offset = (idx / max(1, len(raw_news_list))) * 165600.0  
+            item["sim_timestamp"] = sim_start_time + offset
+            timeline.append(item)
+
+        timeline.sort(key=lambda x: x["sim_timestamp"])
+        return timeline
+
     def run(
         self,
         verbose: bool = True,
@@ -50,10 +87,15 @@ class Backtester:
             raise FileNotFoundError(f"Market data file not found: {self.data_path}")
 
         if verbose:
-            print("Starting Full-Fidelity Event-Driven Backtest")
+            print("Starting Event-Driven Backtest with NLP Intelligence Feed")
+
+        nlp_timeline: List[Dict[str, Any]] = []
+        current_nlp_intel: Optional[Dict[str, Any]] = None
+        nlp_idx = 0
+        sim_start_time = None
 
         with open(self.data_path, "r", encoding="utf-8") as f:
-            for line in f:
+            for line_no, line in enumerate(f):
                 line = line.strip()
                 if not line:
                     continue
@@ -81,6 +123,17 @@ class Backtester:
                 except (ValueError, IndexError):
                     continue
 
+                current_time = event.get("timestamp") or event.get("time") or (line_no * 0.3)
+                if sim_start_time is None:
+                    sim_start_time = current_time
+                    nlp_timeline = self._load_news_timeline(sim_start_time)
+                    if verbose and nlp_timeline:
+                        print(f"Loaded {len(nlp_timeline)} NLP intelligence events for dual-track backtest.")
+
+                while nlp_idx < len(nlp_timeline) and current_time >= nlp_timeline[nlp_idx]["sim_timestamp"]:
+                    current_nlp_intel = nlp_timeline[nlp_idx]
+                    nlp_idx += 1
+
                 mid_price = (bids[0][0] + asks[0][0]) / 2.0
                 if symbol in self.risk_manager.positions:
                     self.risk_manager.positions[symbol]["current_price"] = mid_price
@@ -89,7 +142,7 @@ class Backtester:
                     symbol=symbol,
                     bids=bids,
                     asks=asks,
-                    nlp_intel=None,
+                    nlp_intel=current_nlp_intel,
                 )
 
                 action = decision_record["decision"]["action"]
